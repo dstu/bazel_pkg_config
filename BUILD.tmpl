@@ -1,6 +1,13 @@
 # vi: ft=bzl
 package(default_visibility = ["//visibility:private"])
 
+# Unique identifier for an include path.
+_include_identifiers = [%{include_identifiers}]
+# Prefix to strip from the include path when resolving #include directives.
+_strip_include_prefixes = [%{strip_include_prefixes}]
+# Actual path to the headers to include.
+_include_paths = [%{include_paths}]
+
 _imports = [p[:len(p)-2] for p in glob(["{}/**/*.a".format(d) for d in [%{deps}]])]
 [cc_import(
     name = i.replace("/", "_"),
@@ -14,18 +21,22 @@ cc_library(
     name = "internal_lib",
     hdrs = glob([%{hdrs}]),
     copts = [%{copts}],
-    includes = [%{includes}],
+    includes = _include_paths,
     linkopts = [%{linkopts}],
     deps = [(":" + i.replace("/", "_")) for i in _imports],
+    visibility = ["//visibility:public"],
 )
 
-cc_library(
-    name = "lib",
-    hdrs = glob(["%{strip_include}/**/*.h"]),
+# For each of zip(_include_identifiers, _strip_include_prefixes,
+# _include_paths), generate a uniquely named library that pulls in headers under
+# the path, with strip_include_prefix set appropriately.
+[cc_library(
+    name = _include_identifiers[i],
+    hdrs = glob([_include_paths[i] + "/**/*.h"]),
     copts = [%{extra_copts}],
     linkopts = [%{extra_linkopts}],
     deps = [":internal_lib"] + [%{extra_deps}],
     visibility = ["//visibility:public"],
-    strip_include_prefix = "%{strip_include}",
+    strip_include_prefix = _strip_include_prefixes[i],
     include_prefix = "%{include_prefix}",
-)
+) for i in range(len(_include_identifiers))]

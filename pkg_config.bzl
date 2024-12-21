@@ -1,13 +1,23 @@
 def _success(value):
+    """Returns a successful result struct with the given `value`."""
     return struct(error = None, value = value)
 
+
 def _error(message):
+    """Returns a failure result struct with the given `message`."""
     return struct(error = message, value = None)
 
-def _split(result, delimeter = " "):
+
+def _split(result):
+    """Returns a list from splitting the value of `result` on space characters.
+
+    If `result` is an error, it is propagated.
+
+    Empty list elements are dropped."""
     if result.error != None:
         return result
-    return _success([arg for arg in result.value.strip().split(delimeter) if arg])
+    return _success([arg for arg in result.value.strip().split(" ") if arg])
+
 
 def _find_binary(ctx, binary_name):
     binary = ctx.which(binary_name)
@@ -15,14 +25,17 @@ def _find_binary(ctx, binary_name):
         return _error("Unable to find binary: {}".format(binary_name))
     return _success(binary)
 
+
 def _execute(ctx, binary, args):
     result = ctx.execute([binary] + args)
     if result.return_code != 0:
         return _error("Failed execute {} {}".format(binary, args))
     return _success(result.stdout)
 
+
 def _pkg_config(ctx, pkg_config, pkg_name, args):
     return _execute(ctx, pkg_config, [pkg_name] + args)
+
 
 def _check(ctx, pkg_config, pkg_name):
     exist = _pkg_config(ctx, pkg_config, pkg_name, ["--exists"])
@@ -46,24 +59,20 @@ def _check(ctx, pkg_config, pkg_name):
 
     return _success(None)
 
-def _extract_prefix(flags, prefix, strip = True):
-    stripped, remain = [], []
-    for arg in flags:
-        if arg.startswith(prefix):
-            if strip:
-                stripped += [arg[len(prefix):]]
-            else:
-                stripped += [arg]
-        else:
-            remain += [arg]
-    return stripped, remain
+
+def _drop_prefix(flags, prefix):
+    """Returns items of `flags` that start with `prefix`, with `prefix` dropped.
+    """
+    return [x[len(prefix):] for x in flags if x.startswith(prefix)]
+
 
 def _includes(ctx, pkg_config, pkg_name):
     includes = _split(_pkg_config(ctx, pkg_config, pkg_name, ["--cflags-only-I"]))
     if includes.error != None:
         return includes
-    includes, unused = _extract_prefix(includes.value, "-I", strip = True)
+    includes = _drop_prefix(includes.value, "-I")
     return _success(includes)
+
 
 def _copts(ctx, pkg_config, pkg_name):
     return _split(_pkg_config(ctx, pkg_config, pkg_name, [
@@ -72,12 +81,14 @@ def _copts(ctx, pkg_config, pkg_name):
         "--static",
     ]))
 
+
 def _linkopts(ctx, pkg_config, pkg_name):
     return _split(_pkg_config(ctx, pkg_config, pkg_name, [
         "--libs-only-other",
         "--libs-only-l",
         "--static",
     ]))
+
 
 def _ignore_opts(opts, ignore_opts):
     remain = []
@@ -86,16 +97,38 @@ def _ignore_opts(opts, ignore_opts):
             remain += [opt]
     return remain
 
-def _symlinks(ctx, basename, srcpaths):
-    result = []
-    root = ctx.path("")
-    base = root.get_child(basename)
-    rootlen = len(str(base)) - len(basename)
-    for src in [ctx.path(p) for p in srcpaths]:
-        dest = base.get_child(src.basename)
-        ctx.symlink(src, dest)
-        result += [str(dest)[rootlen:]]
-    return result
+
+def _path_to_identifier(path):
+    return path.replace("_", "__").replace("/", "_slash_").replace(".", "_dot_")
+
+
+def _symlink_includes(ctx, src_paths):
+    includes = []
+    for path in src_paths:
+        id = _path_to_identifier(path)
+        local_include_path = "includes/{}".format(id)
+        ctx.symlink(path, ctx.path("").get_child(local_include_path))
+        if ctx.attr.strip_include != "":
+            strip_include = local_include_path + "/" + ctx.attr.strip_include
+        else:
+            strip_include = local_include_path
+        includes.append(struct(
+            id = id,
+            strip_include = strip_include,
+            include_path = local_include_path,
+        ))
+    return includes
+
+
+def _symlink_libs(ctx, lib_paths):
+    libs = []
+    for path in lib_paths:
+        id = _path_to_identifier(path)
+        local_lib_path = "libs/{}".format(id)
+        ctx.symlink(path, ctx.path("").get_child(local_lib_path))
+        libs.append(local_lib_path)
+    return libs
+
 
 def _deps(ctx, pkg_config, pkg_name):
     deps = _split(_pkg_config(ctx, pkg_config, pkg_name, [
@@ -104,18 +137,18 @@ def _deps(ctx, pkg_config, pkg_name):
     ]))
     if deps.error != None:
         return deps
-    deps, unused = _extract_prefix(deps.value, "-L", strip = True)
-    result = []
-    for dep in {dep: True for dep in deps}.keys():
-        base = "deps_" + dep.replace("/", "_").replace(".", "_")
-        result += _symlinks(ctx, base, [dep])
+    deps = _drop_prefix(deps.value, "-L")
+    result = _symlink_libs(ctx, {d: True for d in deps}.keys())
     return _success(result)
+
 
 def _fmt_array(array):
     return ",".join(['"{}"'.format(a) for a in array])
 
+
 def _fmt_glob(array):
     return _fmt_array(["{}/**/*.h".format(a) for a in array])
+
 
 def _pkg_config_impl(ctx):
     pkg_name = ctx.attr.pkg_name
@@ -134,14 +167,8 @@ def _pkg_config_impl(ctx):
     includes = _includes(ctx, pkg_config, pkg_name)
     if includes.error != None:
         return includes
-    includes = includes.value
-    includes = _symlinks(ctx, "includes", includes)
-    strip_include = "includes"
-    if len(includes) == 1:
-        strip_include = includes[0]
-    if ctx.attr.strip_include != "":
-        strip_include += "/" + ctx.attr.strip_include
-
+    includes = _symlink_includes(ctx, includes.value)
+        
     ignore_opts = ctx.attr.ignore_opts
     copts = _copts(ctx, pkg_config, pkg_name)
     if copts.error != None:
@@ -162,19 +189,27 @@ def _pkg_config_impl(ctx):
     if ctx.attr.include_prefix != "":
         include_prefix = ctx.attr.include_prefix + "/" + ctx.attr.name
 
+    include_identifiers = [x.id for x in includes]
+    strip_include_prefixes = [x.strip_include for x in includes]
+    include_paths = [x.include_path for x in includes]
+    print("include ids: {}".format(include_identifiers))
+    print("strip include prefixes: {}".format(strip_include_prefixes))
+    print("include paths: {}".format(include_paths))
     build = ctx.template("BUILD", Label("//:BUILD.tmpl"), substitutions = {
         "%{name}": ctx.attr.name,
-        "%{hdrs}": _fmt_glob(includes),
-        "%{includes}": _fmt_array(includes),
+        "%{hdrs}": _fmt_glob([x.include_path for x in includes]),
+        "%{include_identifiers}": _fmt_array(include_identifiers),
+        "%{strip_include_prefixes}": _fmt_array(strip_include_prefixes),
+        "%{include_paths}": _fmt_array(include_paths),
         "%{copts}": _fmt_array(copts),
         "%{extra_copts}": _fmt_array(ctx.attr.copts),
         "%{deps}": _fmt_array(deps),
         "%{extra_deps}": _fmt_array(ctx.attr.deps),
         "%{linkopts}": _fmt_array(linkopts),
         "%{extra_linkopts}": _fmt_array(ctx.attr.linkopts),
-        "%{strip_include}": strip_include,
         "%{include_prefix}": include_prefix,
     }, executable = False)
+
 
 pkg_config = repository_rule(
     attrs = {
