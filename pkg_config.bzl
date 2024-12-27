@@ -103,21 +103,127 @@ def _path_to_identifier(path):
 
 
 def _symlink_includes(ctx, src_paths):
+    """Creates symlinks `include/a/b/foo` for each `a/b/foo` under each of `src_paths`.
+
+    This effectively merges the directories in `src_paths`. This should avoid
+    collisions if there are multiple directories with the same name under
+    different `src_paths`.
+
+    Due to Starlark limitations, we cannot recursively traverse the entire
+    directory tree for each of `src_paths`. As a result, this operation will
+    fail if there are collisions in file names after the first few levels of
+    directory structure. (It is okay if `src_paths[0]/a/foo.h` and
+    `src_paths[1]/a/bar.h` both exist. The common `a` subdirectories will be
+    merged. It is not okay if `src_paths[0]/a/b/c/d/e/f/g/foo.h` and
+    `src_paths[1]/a/b/c/d/e/f/g/bar.h` both exist. The manually unrolled
+    recursion will error out because the naming collisions go too deep.)
+
+    Returns a success wrapping a list of the files (not including directories)
+    symlinked under `include/`, or an error explaining why the process failed.
+    """
+    # print("will symlink each of {} items: {}".format(len(src_paths), src_paths))
     includes = []
-    for path in src_paths:
-        id = _path_to_identifier(path)
-        local_include_path = "includes/{}".format(id)
-        ctx.symlink(path, ctx.path("").get_child(local_include_path))
-        if ctx.attr.strip_include != "":
-            strip_include = local_include_path + "/" + ctx.attr.strip_include
+    for src_root in src_paths:
+        # print("working on src_root: {}".format(src_root))
+        result = _symlink_tree_depth_0(ctx, ctx.path(src_root), includes)
+        if result.error != None:
+            return result
+    # print("finished symlinking {}, includes: {}".format(src_paths, includes))
+    return _success(includes)
+
+
+def _symlink_tree_depth_0(ctx, root, acc):
+    # print("enter depth 0: {}".format(root))
+    prefix = str(root.dirname)
+    if prefix[-1] != "/":
+        prefix += "/"
+    for child in root.readdir():
+        # print("depth 0 examining: {}".format(child))
+        if child.is_dir:
+            # print("{} is dir".format(child))
+            result = _symlink_tree_depth_1(ctx, child, acc)
+            if result.error != None:
+                return result
         else:
-            strip_include = local_include_path
-        includes.append(struct(
-            id = id,
-            strip_include = strip_include,
-            include_path = local_include_path,
-        ))
-    return includes
+            # print("{} is not dir".format(child))
+            local_path = str(child)[len(prefix):]
+            # TODO: error if local_path exists.
+            acc.append(local_path)
+            _symlink_tolerate_redundancy(ctx, child, ctx.path("include").get_child(local_path))
+    return _success(None)
+
+def _symlink_tree_depth_1(ctx, root, acc):
+    # print("enter depth 1: {}".format(root))
+    prefix = str(root.dirname)
+    if prefix[-1] != "/":
+        prefix += "/"
+    children = root.readdir()
+    # print("depth 1 {} has {} children: {}".format(root, len(children), children))
+    for child in children:
+        # print("depth 1 examining: {}".format(child))
+        if child.is_dir:
+            # print("{} is dir".format(child))
+            result = _symlink_tree_depth_2(ctx, child, acc)
+            if result.error != None:
+                return result
+        else:
+            # print("{} is not dir".format(child))
+            local_path = str(child)[len(prefix):]
+            # TODO: error if local_path exists.
+            acc.append(local_path)
+            _symlink_tolerate_redundancy(ctx, child, ctx.path("include").get_child(local_path))
+    return _success(None)
+
+
+def _symlink_tree_depth_2(ctx, root, acc):
+    # print("enter depth 2: {}".format(root))
+    prefix = str(root.dirname.dirname)
+    if prefix[-1] != "/":
+        prefix += "/"
+    for child in root.readdir():
+        # print("depth 2 examining: {}".format(child))
+        local_path = str(child)[len(prefix):]
+        # TODO: error if local_path exists.
+        acc.append(local_path)
+        _symlink_tolerate_redundancy(ctx, child, ctx.path("include").get_child(local_path))
+    return _success(None)
+
+# def _symlink_tree_a(recur, ctx, root, frontier, acc):
+#     if frontier:
+#         path = frontier.pop(0)
+#         if path.is_dir:
+#             for c in path.readdir():
+#                 frontier.append(c)
+#         else:
+#             local_path = str(path)[len(root):]
+#             acc.append(local_path)
+#             ctx.symlink(path, ctx.path("includes").get_child(local_path))
+#         return recur(ctx, root, frontier, acc)
+#     else:
+#         return acc
+
+
+# def _symlink_tree_b(ctx, root, frontier, acc):
+#     if frontier:
+#         path = frontier.pop(0)
+#         if path.is_dir:
+#             for c in path.readdir():
+#                 frontier.append(c)
+#         else:
+#             local_path = str(path)[len(root):]
+#             acc.append(local_path)
+#             ctx.symlink(path, ctx.path("includes").get_child(local_path))
+#         return _symlink_tree_a(ctx, root, frontier, acc)
+#     else:
+#         return acc
+
+
+def _symlink_tolerate_redundancy(ctx, src, dest):
+    """Symlinks `src` to `dest`, unless `src` already exists and points to `dest`."""
+    if dest.exists and src.realpath == dest.realpath:
+        return
+    # print("symlink {} to {}".format(src, dest))
+    ctx.symlink(src, dest)
 
 
 def _symlink_libs(ctx, lib_paths):
@@ -125,7 +231,7 @@ def _symlink_libs(ctx, lib_paths):
     for path in lib_paths:
         id = _path_to_identifier(path)
         local_lib_path = "libs/{}".format(id)
-        ctx.symlink(path, ctx.path("").get_child(local_lib_path))
+        _symlink_tolerate_redundancy(ctx, path, ctx.path("").get_child(local_lib_path))
         libs.append(local_lib_path)
     return libs
 
@@ -164,10 +270,14 @@ def _pkg_config_impl(ctx):
     if check.error != None:
         return check
 
-    includes = _includes(ctx, pkg_config, pkg_name)
+    include_paths = _includes(ctx, pkg_config, pkg_name)
+    if include_paths.error != None:
+        return include_paths
+    include_paths = include_paths.value
+    includes = _symlink_includes(ctx, include_paths)
     if includes.error != None:
         return includes
-    includes = _symlink_includes(ctx, includes.value)
+    includes = includes.value
         
     ignore_opts = ctx.attr.ignore_opts
     copts = _copts(ctx, pkg_config, pkg_name)
@@ -185,29 +295,23 @@ def _pkg_config_impl(ctx):
         return deps
     deps = deps.value
 
-    include_prefix = ctx.attr.name
-    if ctx.attr.include_prefix != "":
-        include_prefix = ctx.attr.include_prefix + "/" + ctx.attr.name
+    if ctx.attr.strip_include != "":
+        strip_include_prefix = "include/{}".format(ctx.attr.strip_include_prefix)
+    else:
+        strip_include_prefix = "include/"
 
-    include_identifiers = [x.id for x in includes]
-    strip_include_prefixes = [x.strip_include for x in includes]
-    include_paths = [x.include_path for x in includes]
-    print("include ids: {}".format(include_identifiers))
-    print("strip include prefixes: {}".format(strip_include_prefixes))
-    print("include paths: {}".format(include_paths))
+    # print("includes: {}".format(includes))
     build = ctx.template("BUILD", Label("//:BUILD.tmpl"), substitutions = {
         "%{name}": ctx.attr.name,
-        "%{hdrs}": _fmt_glob([x.include_path for x in includes]),
-        "%{include_identifiers}": _fmt_array(include_identifiers),
-        "%{strip_include_prefixes}": _fmt_array(strip_include_prefixes),
-        "%{include_paths}": _fmt_array(include_paths),
+        "%{includes}": _fmt_array(include_paths),
         "%{copts}": _fmt_array(copts),
         "%{extra_copts}": _fmt_array(ctx.attr.copts),
         "%{deps}": _fmt_array(deps),
         "%{extra_deps}": _fmt_array(ctx.attr.deps),
         "%{linkopts}": _fmt_array(linkopts),
         "%{extra_linkopts}": _fmt_array(ctx.attr.linkopts),
-        "%{include_prefix}": include_prefix,
+        "%{strip_include_prefix}": strip_include_prefix,
+        "%{include_prefix}": ctx.attr.include_prefix,
     }, executable = False)
 
 
