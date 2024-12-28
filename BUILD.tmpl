@@ -7,14 +7,14 @@ _imports = [p[:len(p)-2] for p in glob(["{}/**/*.a".format(d) for d in [%{deps}]
     hdrs = glob(["include/**/*.h"]),
     # TODO: library extension for platform.
     static_library = "{}.a".format(i),
-    shared_library = "{}.dylib".format(i),
+    shared_library = "{}.so".format(i),
 ) for i in _imports]
 
 cc_library(
     name = "internal_lib",
     hdrs = glob(["include/**/*.h"]),
     copts = [%{copts}],
-    includes = [%{includes}],
+    includes = ["include"],
     linkopts = [%{linkopts}],
     deps = [(":" + i.replace("/", "_")) for i in _imports],
     visibility = ["//visibility:public"],
@@ -24,7 +24,7 @@ cc_library(
     name = "lib",
     hdrs = glob(["include/**/*.h"]),
     copts = [%{extra_copts}],
-    includes = [%{includes}],
+    includes = ["include"],
     linkopts = [%{extra_linkopts}],
     deps = [":internal_lib"] + [%{extra_deps}],
     visibility = ["//visibility:public"],

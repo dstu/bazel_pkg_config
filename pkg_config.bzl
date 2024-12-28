@@ -134,7 +134,7 @@ def _symlink_includes(ctx, src_paths):
 
 def _symlink_tree_depth_0(ctx, root, acc):
     # print("enter depth 0: {}".format(root))
-    prefix = str(root.dirname)
+    prefix = str(root)
     if prefix[-1] != "/":
         prefix += "/"
     for child in root.readdir():
@@ -273,8 +273,7 @@ def _pkg_config_impl(ctx):
     include_paths = _includes(ctx, pkg_config, pkg_name)
     if include_paths.error != None:
         return include_paths
-    include_paths = include_paths.value
-    includes = _symlink_includes(ctx, include_paths)
+    includes = _symlink_includes(ctx, include_paths.value)
     if includes.error != None:
         return includes
     includes = includes.value
@@ -303,7 +302,7 @@ def _pkg_config_impl(ctx):
     # print("includes: {}".format(includes))
     build = ctx.template("BUILD", Label("//:BUILD.tmpl"), substitutions = {
         "%{name}": ctx.attr.name,
-        "%{includes}": _fmt_array(include_paths),
+        # "%{includes}": _fmt_array(include_paths),
         "%{copts}": _fmt_array(copts),
         "%{extra_copts}": _fmt_array(ctx.attr.copts),
         "%{deps}": _fmt_array(deps),
