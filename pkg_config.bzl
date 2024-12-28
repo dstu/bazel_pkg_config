@@ -61,12 +61,12 @@ def _check(ctx, pkg_config, pkg_name):
 
 
 def _drop_prefix(flags, prefix):
-    """Returns items of `flags` that start with `prefix`, with `prefix` dropped.
-    """
+    """Returns items of `flags` that start with `prefix`, with `prefix` dropped."""
     return [x[len(prefix):] for x in flags if x.startswith(prefix)]
 
 
 def _includes(ctx, pkg_config, pkg_name):
+    """Returns a list of include paths for `pkg_name` by invoking `pkg_config`."""
     includes = _split(_pkg_config(ctx, pkg_config, pkg_name, ["--cflags-only-I"]))
     if includes.error != None:
         return includes
@@ -75,6 +75,7 @@ def _includes(ctx, pkg_config, pkg_name):
 
 
 def _copts(ctx, pkg_config, pkg_name):
+    """Returns a list of compiler options for `pkg_name` by invoking `pkg_config`."""
     return _split(_pkg_config(ctx, pkg_config, pkg_name, [
         "--cflags-only-other",
         "--libs-only-L",
@@ -83,6 +84,7 @@ def _copts(ctx, pkg_config, pkg_name):
 
 
 def _linkopts(ctx, pkg_config, pkg_name):
+    """Returns a list of linker options for `pkg_name` by invoking `pkg_config`."""
     return _split(_pkg_config(ctx, pkg_config, pkg_name, [
         "--libs-only-other",
         "--libs-only-l",
@@ -91,6 +93,7 @@ def _linkopts(ctx, pkg_config, pkg_name):
 
 
 def _ignore_opts(opts, ignore_opts):
+    """Returns `opts`, filtered by removing anything in `ignore_opts`."""
     remain = []
     for opt in opts:
         if opt not in ignore_opts:
@@ -98,19 +101,17 @@ def _ignore_opts(opts, ignore_opts):
     return remain
 
 
-def _path_to_identifier(path):
-    return path.replace("_", "__").replace("/", "_slash_").replace(".", "_dot_")
-
-
 def _symlink_includes(ctx, src_paths):
-    """Creates symlinks `include/a/b/foo` for each `a/b/foo` under each of `src_paths`.
+    """Creates symlinks `include/a/b/foo.h` for each `a/b/foo.h` under `src_paths`.
 
-    This effectively merges the directories in `src_paths`. This should avoid
-    collisions if there are multiple directories with the same name under
-    different `src_paths`.
+    This effectively merges the directories in `src_paths` into a local
+    "include" directory. This avoids common collisions from having multiple
+    directories with the same name under different `src_paths`. (Simply
+    symlinking `src_paths[0]/foo` to `include/foo` will blow up if
+    `src_paths[1]/foo` also exists.)
 
     Due to Starlark limitations, we cannot recursively traverse the entire
-    directory tree for each of `src_paths`. As a result, this operation will
+    directory tree under each of `src_paths`. As a result, this operation will
     fail if there are collisions in file names after the first few levels of
     directory structure. (It is okay if `src_paths[0]/a/foo.h` and
     `src_paths[1]/a/bar.h` both exist. The common `a` subdirectories will be
@@ -121,31 +122,24 @@ def _symlink_includes(ctx, src_paths):
     Returns a success wrapping a list of the files (not including directories)
     symlinked under `include/`, or an error explaining why the process failed.
     """
-    # print("will symlink each of {} items: {}".format(len(src_paths), src_paths))
     includes = []
     for src_root in src_paths:
-        # print("working on src_root: {}".format(src_root))
         result = _symlink_tree_depth_0(ctx, ctx.path(src_root), includes)
         if result.error != None:
             return result
-    # print("finished symlinking {}, includes: {}".format(src_paths, includes))
     return _success(includes)
 
 
 def _symlink_tree_depth_0(ctx, root, acc):
-    # print("enter depth 0: {}".format(root))
     prefix = str(root)
     if prefix[-1] != "/":
         prefix += "/"
     for child in root.readdir():
-        # print("depth 0 examining: {}".format(child))
         if child.is_dir:
-            # print("{} is dir".format(child))
             result = _symlink_tree_depth_1(ctx, child, acc)
             if result.error != None:
                 return result
         else:
-            # print("{} is not dir".format(child))
             local_path = str(child)[len(prefix):]
             # TODO: error if local_path exists.
             acc.append(local_path)
@@ -153,21 +147,16 @@ def _symlink_tree_depth_0(ctx, root, acc):
     return _success(None)
 
 def _symlink_tree_depth_1(ctx, root, acc):
-    # print("enter depth 1: {}".format(root))
     prefix = str(root.dirname)
     if prefix[-1] != "/":
         prefix += "/"
     children = root.readdir()
-    # print("depth 1 {} has {} children: {}".format(root, len(children), children))
     for child in children:
-        # print("depth 1 examining: {}".format(child))
         if child.is_dir:
-            # print("{} is dir".format(child))
             result = _symlink_tree_depth_2(ctx, child, acc)
             if result.error != None:
                 return result
         else:
-            # print("{} is not dir".format(child))
             local_path = str(child)[len(prefix):]
             # TODO: error if local_path exists.
             acc.append(local_path)
@@ -176,60 +165,28 @@ def _symlink_tree_depth_1(ctx, root, acc):
 
 
 def _symlink_tree_depth_2(ctx, root, acc):
-    # print("enter depth 2: {}".format(root))
     prefix = str(root.dirname.dirname)
     if prefix[-1] != "/":
         prefix += "/"
     for child in root.readdir():
-        # print("depth 2 examining: {}".format(child))
         local_path = str(child)[len(prefix):]
         # TODO: error if local_path exists.
         acc.append(local_path)
         _symlink_tolerate_redundancy(ctx, child, ctx.path("include").get_child(local_path))
     return _success(None)
 
-# def _symlink_tree_a(recur, ctx, root, frontier, acc):
-#     if frontier:
-#         path = frontier.pop(0)
-#         if path.is_dir:
-#             for c in path.readdir():
-#                 frontier.append(c)
-#         else:
-#             local_path = str(path)[len(root):]
-#             acc.append(local_path)
-#             ctx.symlink(path, ctx.path("includes").get_child(local_path))
-#         return recur(ctx, root, frontier, acc)
-#     else:
-#         return acc
-
-
-# def _symlink_tree_b(ctx, root, frontier, acc):
-#     if frontier:
-#         path = frontier.pop(0)
-#         if path.is_dir:
-#             for c in path.readdir():
-#                 frontier.append(c)
-#         else:
-#             local_path = str(path)[len(root):]
-#             acc.append(local_path)
-#             ctx.symlink(path, ctx.path("includes").get_child(local_path))
-#         return _symlink_tree_a(ctx, root, frontier, acc)
-#     else:
-#         return acc
-
 
 def _symlink_tolerate_redundancy(ctx, src, dest):
     """Symlinks `src` to `dest`, unless `src` already exists and points to `dest`."""
     if dest.exists and src.realpath == dest.realpath:
         return
-    # print("symlink {} to {}".format(src, dest))
     ctx.symlink(src, dest)
 
 
 def _symlink_libs(ctx, lib_paths):
     libs = []
     for path in lib_paths:
-        id = _path_to_identifier(path)
+        id = path.replace("_", "__").replace("/", "_slash_").replace(".", "_dot_")
         local_lib_path = "libs/{}".format(id)
         _symlink_tolerate_redundancy(ctx, path, ctx.path("").get_child(local_lib_path))
         libs.append(local_lib_path)
@@ -299,10 +256,8 @@ def _pkg_config_impl(ctx):
     else:
         strip_include_prefix = "include/"
 
-    # print("includes: {}".format(includes))
     build = ctx.template("BUILD", Label("//:BUILD.tmpl"), substitutions = {
         "%{name}": ctx.attr.name,
-        # "%{includes}": _fmt_array(include_paths),
         "%{copts}": _fmt_array(copts),
         "%{extra_copts}": _fmt_array(ctx.attr.copts),
         "%{deps}": _fmt_array(deps),
