@@ -33,8 +33,7 @@ def _find_binary(ctx, binary_name):
 
 
 def _pkg_config(ctx, pkg_config, pkg_name, args):
-    """
-    Runs the pkg-config binary at `pkg_config` for the given `pkg_name` with additional args the list `args`.
+    """Runs the pkg-config binary at `pkg_config` for the given `pkg_name` with additional args the list `args`.
 
     Returns a success struct (with value the stdout of `pkg_config` if it exits
     successfully, or an error struct.
@@ -46,8 +45,7 @@ def _pkg_config(ctx, pkg_config, pkg_name, args):
 
 
 def _check(ctx, pkg_config, pkg_name):
-    """
-    Checks that the package `pkg_name` exists by running the binary at `pkg_config`.
+    """Checks that the package `pkg_name` exists by running the binary at `pkg_config`.
 
     If version restrictions are provided in `ctx` (`ctx.attr.version`,
     `ctx.attr.min_version`, `ctx.attr.max_version`), then they are also checked.
@@ -191,8 +189,7 @@ def _symlink_tree_depth_2(ctx, root, acc):
 
 
 def _symlink_tolerate_redundancy(ctx, src, dest):
-    """
-    Symlinks `src` to `dest`, failing if `src` exists and doesn't point to `dest`.
+    """Symlinks `src` to `dest`, failing if `src` exists and doesn't point to `dest`.
 
     If `src` already exists and points to `dest`, this is a no-op.
 
@@ -205,8 +202,7 @@ def _symlink_tolerate_redundancy(ctx, src, dest):
 
 
 def _symlink_libs(ctx, lib_paths):
-    """
-    Creates a symlink of each of `lib_paths` under the local directory `libs`.
+    """Creates a symlink of each of `lib_paths` under the local directory `libs`.
 
     Symlinks are named after the whole path to their target.
 
@@ -240,7 +236,7 @@ def _fmt_array(array):
 
 
 def _fmt_glob(array):
-    """Formats the collection `array` into a glob match for all `.h` files under each element."""
+    """Formats the collection `array` into a comma-separated list of glob matches for all `.h` files under each element."""
     return _fmt_array(["{}/**/*.h".format(a) for a in array])
 
 
