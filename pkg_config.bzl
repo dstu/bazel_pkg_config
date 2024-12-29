@@ -13,31 +13,48 @@ def _split(result):
 
     If `result` is an error, it is propagated.
 
-    Empty list elements are dropped."""
+    Empty list elements are dropped.
+    """
     if result.error != None:
         return result
     return _success([arg for arg in result.value.strip().split(" ") if arg])
 
 
 def _find_binary(ctx, binary_name):
+    """Locates the binary `binary_name`.
+
+    Returns success if found (with value the path to the binary) and an error
+    otherwise.
+    """
     binary = ctx.which(binary_name)
     if binary == None:
         return _error("Unable to find binary: {}".format(binary_name))
     return _success(binary)
 
 
-def _execute(ctx, binary, args):
-    result = ctx.execute([binary] + args)
+def _pkg_config(ctx, pkg_config, pkg_name, args):
+    """
+    Runs the pkg-config binary at `pkg_config` for the given `pkg_name` with additional args the list `args`.
+
+    Returns a success struct (with value the stdout of `pkg_config` if it exits
+    successfully, or an error struct.
+    """
+    result = ctx.execute([pkg_config, pkg_name] + args)
     if result.return_code != 0:
-        return _error("Failed execute {} {}".format(binary, args))
+        return _error("Failed execute {} {}".format(pkg_config, args))
     return _success(result.stdout)
 
 
-def _pkg_config(ctx, pkg_config, pkg_name, args):
-    return _execute(ctx, pkg_config, [pkg_name] + args)
-
-
 def _check(ctx, pkg_config, pkg_name):
+    """
+    Checks that the package `pkg_name` exists by running the binary at `pkg_config`.
+
+    If version restrictions are provided in `ctx` (`ctx.attr.version`,
+    `ctx.attr.min_version`, `ctx.attr.max_version`), then they are also checked.
+
+    Returns a success struct if `pkg_name` exists at the required version, or an
+    error struct if it doesn't.
+    """
     exist = _pkg_config(ctx, pkg_config, pkg_name, ["--exists"])
     if exist.error != None:
         return _error("Package {} does not exist".format(pkg_name))
@@ -177,15 +194,30 @@ def _symlink_tree_depth_2(ctx, root, acc):
 
 
 def _symlink_tolerate_redundancy(ctx, src, dest):
-    """Symlinks `src` to `dest`, unless `src` already exists and points to `dest`."""
+    """
+    Symlinks `src` to `dest`, failing if `src` exists and doesn't point to `dest`.
+
+    If `src` already exists and points to `dest`, this is a no-op.
+
+    If `src` already exists and doesn't point to `dest`, this raises a
+    user-visible error.
+    """
     if dest.exists and src.realpath == dest.realpath:
         return
     ctx.symlink(src, dest)
 
 
 def _symlink_libs(ctx, lib_paths):
+    """
+    Creates a symlink of each of `lib_paths` under the local directory `libs`.
+
+    Symlinks are named after the whole path to their target.
+
+    Targets are canonicalized before creating links to them.
+    """
     libs = []
     for path in lib_paths:
+        path = str(ctx.path(path).realpath)
         id = path.replace("_", "__").replace("/", "_slash_").replace(".", "_dot_")
         local_lib_path = "libs/{}".format(id)
         _symlink_tolerate_redundancy(ctx, path, ctx.path("").get_child(local_lib_path))
@@ -206,10 +238,12 @@ def _deps(ctx, pkg_config, pkg_name):
 
 
 def _fmt_array(array):
+    """Formats the collection `array` by splicing commas between elements."""
     return ",".join(['"{}"'.format(a) for a in array])
 
 
 def _fmt_glob(array):
+    """Formats the collection `array` into a glob match for all `.h` files under each element."""
     return _fmt_array(["{}/**/*.h".format(a) for a in array])
 
 
