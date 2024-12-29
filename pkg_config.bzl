@@ -158,9 +158,8 @@ def _symlink_tree_depth_0(ctx, root, acc):
                 return result
         else:
             local_path = str(child)[len(prefix):]
-            # TODO: error if local_path exists.
-            acc.append(local_path)
             _symlink_tolerate_redundancy(ctx, child, ctx.path("include").get_child(local_path))
+            acc.append(local_path)
     return _success(None)
 
 def _symlink_tree_depth_1(ctx, root, acc):
@@ -175,9 +174,8 @@ def _symlink_tree_depth_1(ctx, root, acc):
                 return result
         else:
             local_path = str(child)[len(prefix):]
-            # TODO: error if local_path exists.
-            acc.append(local_path)
             _symlink_tolerate_redundancy(ctx, child, ctx.path("include").get_child(local_path))
+            acc.append(local_path)
     return _success(None)
 
 
@@ -187,7 +185,6 @@ def _symlink_tree_depth_2(ctx, root, acc):
         prefix += "/"
     for child in root.readdir():
         local_path = str(child)[len(prefix):]
-        # TODO: error if local_path exists.
         acc.append(local_path)
         _symlink_tolerate_redundancy(ctx, child, ctx.path("include").get_child(local_path))
     return _success(None)
