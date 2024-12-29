@@ -35,7 +35,7 @@ def _find_binary(ctx, binary_name):
 def _pkg_config(ctx, pkg_config, pkg_name, args):
     """Runs the pkg-config binary at `pkg_config` for the given `pkg_name` with additional args the list `args`.
 
-    Returns a success struct (with value the stdout of `pkg_config` if it exits
+    Returns a success struct (with value the stdout of `pkg_config`) if it exits
     successfully, or an error struct.
     """
     result = ctx.execute([pkg_config, pkg_name] + args)
